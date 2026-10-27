@@ -12,6 +12,8 @@
 #pragma pack(push, 1)
 
 struct FrameHeader{
+    uint8_t src_mac[6];
+    uint8_t dst_mac[6];
     uint8_t type;
     uint16_t seq;
     uint16_t ack;
