@@ -4,7 +4,7 @@
 #include <iomanip>
 
 GbnSender::GbnSender(const std::string& src_mac, const std::string& dst_mac,
-                     uint8_t win_size, double timeout)
+                     uint8_t win_size, double timeout, bool enable_fast_retx)
     : sender_mac(src_mac),
       receiver_mac(dst_mac),
       window_size(win_size),
@@ -13,8 +13,12 @@ GbnSender::GbnSender(const std::string& src_mac, const std::string& dst_mac,
       timeout_duration(timeout),
       timer_start_time(0.0),
       timer_running(false),
+      last_ack_received(-1),
+      dup_ack_count(0),
+      fast_retransmit_enabled(enable_fast_retx),
       total_retransmissions(0),
-      total_packets_sent(0) {}
+      total_packets_sent(0),
+      fast_retransmissions_triggered(0) {}
 
 bool GbnSender::can_send() const {
     return next_seq_num < (base + window_size);
@@ -38,11 +42,13 @@ DLLFrame GbnSender::send_packet(const std::string& payload, double current_time)
     return frame;
 }
 
-bool GbnSender::process_ack(uint16_t cumulative_ack, double current_time) {
+bool GbnSender::process_ack(uint16_t cumulative_ack, double current_time, std::vector<DLLFrame>* out_fast_retx) {
     // Cumulative ACK: ACK=k acknowledges all packets up to and including k
     if (cumulative_ack >= base && cumulative_ack < next_seq_num) {
         uint16_t old_base = base;
         base = cumulative_ack + 1;
+        last_ack_received = cumulative_ack;
+        dup_ack_count = 0; // reset duplicate ACK count on fresh advance
 
         // Pop acknowledged frames from buffer
         size_t acked_count = base - old_base;
@@ -59,7 +65,35 @@ bool GbnSender::process_ack(uint16_t cumulative_ack, double current_time) {
         }
         return true;
     }
-    // Duplicate or out-of-range ACK (ignored in standard GBN)
+
+    // Duplicate ACK detection (Layer-2 Fast Retransmit)
+    if (last_ack_received >= 0 && cumulative_ack == static_cast<uint16_t>(last_ack_received)) {
+        dup_ack_count++;
+        std::cout << "  " << Color::YELLOW << "[DUP-ACK #" << dup_ack_count
+                  << "] Repeated ACK=" << cumulative_ack << " received for Base=" << base << Color::RESET << "\n";
+
+        if (fast_retransmit_enabled && dup_ack_count == 3 && !buffer.empty()) {
+            fast_retransmissions_triggered++;
+            std::cout << "\n  " << Color::MAGENTA << Color::BOLD
+                      << "⚡ [LAYER-2 FAST RETRANSMIT] 3 Duplicate ACKs detected for Seq=" << cumulative_ack << "!"
+                      << "\n  --> Early Packet Loss Inference: Packet Seq=" << base << " was lost in transit!"
+                      << "\n  --> Retransmitting window immediately WITHOUT waiting for coarse timer (saved ~"
+                      << std::fixed << std::setprecision(2) << (timeout_duration - (current_time - timer_start_time))
+                      << "s idle wait time)!" << Color::RESET << "\n";
+
+            if (out_fast_retx) {
+                for (size_t i = 0; i < buffer.size(); ++i) {
+                    DLLFrame retx = buffer[i];
+                    retx.flags |= FLAG_RETRANSMISSION;
+                    retx.fcs = retx.compute_fcs();
+                    out_fast_retx->push_back(retx);
+                    total_retransmissions++;
+                }
+            }
+            // Reset timer after fast retransmission
+            timer_start_time = current_time;
+        }
+    }
     return false;
 }
 
