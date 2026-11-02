@@ -1,178 +1,206 @@
-# Data Link Layer Protocol Suite (C++ Core + PyShark Packet Dissection)
+# Data Link Layer Protocol Suite
 
-A complete, production-grade implementation of the Data Link Layer (Layer 2) developed from first principles in **C++** with automated **PyShark (Wireshark)** deep packet inspection and mathematical verification.
-
----
-
-## 🌟 Key Features
-
-1. **Flow Control — Go-Back-N (GBN) ARQ Protocol:**
-   - Sliding window of size $N$ (configurable, default $N=4$) maintaining the sequence range $[Base, NextSeqNum)$.
-   - Strict in-order frame verification with rejection of damaged or out-of-order packets.
-   - Cumulative acknowledgment feedback ($ACK(k)$ confirms contiguous frames $0 \dots k$).
-   - Base packet countdown timer and Go-Back-N retransmission cascade on timeout.
-
-2. **Error Control — Cyclic Redundancy Check (CRC-32 & CRC-16):**
-   - Implemented from scratch without external libraries.
-   - **Dual-Engine Design:** Pure bit-by-bit modulo-2 polynomial division shift-register and precomputed 256-entry table acceleration.
-   - Standard **IEEE 802.3 Ethernet polynomial:** $0xEDB88320$ (reflected) / $0x04C11DB7$ (normal), plus CRC-16 CCITT ($0x1021$).
-   - Injected single-bit noise and 12-bit electrical burst noise with automatic receiver FCS syndrome check and corrupted frame discard.
-
-3. **Multiple Access Control — CSMA & CSMA/CD with Exponential Backoff:**
-   - Multi-station shared broadcast bus contention (Node A, Node B, Node C).
-   - Carrier sensing strategies: **1-Persistent**, **Non-Persistent**, and **p-Persistent**.
-   - **Collision Detection (CD):** Simultaneous transmission detection during the propagation window.
-   - Immediate transmission abort and **32-bit Jam Signal** broadcast (`FRAME_JAM = 0x04`).
-   - **Truncated Binary Exponential Backoff (BEB):** $r \in [0, 2^{\min(k, 10)} - 1]$, wait $r \times \text{slot\_time}$.
-
-4. **PyShark Deep Packet Inspection & Native Wireshark Lua Dissector:**
-   - Standalone C++ binary PCAP exporter writes raw frames directly into standard libpcap format (`0xA1B2C3D4`, Link Type 1 = Ethernet).
-   - Includes a custom **Wireshark Lua Dissector** (`captures/dll_dissector.lua`) bound to EtherType `0x88B5` allowing Wireshark and TShark to natively parse custom header fields (`dll.type`, `dll.seq`, `dll.ack`, `dll.window`, `dll.flags`, `dll.fcs`).
-   - PyShark parses `captures/dll_cpp_capture.pcap` via TShark, displaying Ethernet II headers, custom DLL headers, FCS verification status, and payload hex dumps.
+A complete implementation of the Data Link Layer (OSI Layer 2) developed from first principles in C++ with automated PyShark packet inspection, mathematical verification, and a native Wireshark Lua dissector.
 
 ---
 
-## 📂 Repository Structure
+## Overview
+
+This project implements the core responsibilities of the Data Link Layer:
+* **Framing & Demarcation:** IEEE 802.3 Ethernet frame encapsulation with custom EtherType `0x88B5`.
+* **Error Control:** CRC-32 (IEEE 802.3 polynomial) and CRC-16 (CCITT polynomial) via bitwise shift-register LFSR and precomputed 256-entry lookup tables.
+* **Flow Control:** Go-Back-N (GBN) sliding window ARQ with cumulative acknowledgments and Layer-2 Fast Retransmit.
+* **Medium Access Control (MAC):** CSMA/CD with carrier sensing, collision detection, 32-bit collision jamming, and Truncated Binary Exponential Backoff (BEB).
+* **Packet Inspection:** Native Wireshark Lua dissector plugin and PyShark dissection engine parsing standard Libpcap binary captures.
+
+---
+
+## Key Features
+
+### 1. Flow Control - Go-Back-N ARQ with Fast Retransmit
+* Configurable sliding window bounds unacknowledged in-flight frames: `[Base, NextSeqNum)`.
+* Strict in-order frame validation at receiver; damaged or out-of-order packets are discarded without buffer pollution.
+* Cumulative acknowledgments: `ACK(k)` confirms contiguous delivery of all frames from `0` through `k`.
+* Countdown timer for the oldest unacknowledged frame (`Base`) with Go-Back-N retransmission cascade upon expiration.
+* **Layer-2 Fast Retransmit:** When 3 duplicate ACKs are detected, the sender infers packet loss early and retransmits the window immediately without waiting for the coarse timer.
+
+### 2. Error Control - CRC-32 & CRC-16
+* **Dual-Engine Architecture:**
+  * **Bitwise Shift-Register:** Simulates a hardware Linear Feedback Shift Register (LFSR) performing modulo-2 polynomial division.
+  * **Table Acceleration:** Precomputed 256-entry lookup table for high-throughput frame generation.
+* Standard IEEE 802.3 polynomial: `0xEDB88320` (reflected) / `0x04C11DB7` (normal).
+* Standard CRC-16 CCITT polynomial: `0x1021`.
+* Noise injection module supports single-bit flips and electrical burst errors with automatic syndrome mismatch detection.
+
+### 3. Multiple Access Control - CSMA/CD with Exponential Backoff
+* Multi-station shared broadcast bus simulation (Node A, Node B, Node C).
+* Carrier sensing strategies: 1-Persistent, Non-Persistent, and p-Persistent.
+* Collision Detection during the propagation delay window ($\tau$).
+* Immediate transmission abort and 32-bit Jam Signal broadcast (`FRAME_JAM = 0x04`) to `FF:FF:FF:FF:FF:FF`.
+* Truncated Binary Exponential Backoff (BEB): contention window $r \in [0, 2^{\min(k, 10)} - 1]$, backoff delay $T = r \times \text{slot\_time}$.
+
+### 4. Deep Packet Inspection & Wireshark Dissector
+* Generates standard Libpcap binary files (`.pcap`) with microsecond timestamps and Ethernet Link Type (`0x01`).
+* Custom Wireshark Lua Dissector (`captures/dll_dissector.lua`) bound to EtherType `0x88B5` provides native field decoding (`dll.type`, `dll.seq`, `dll.ack`, `dll.window`, `dll.flags`, `dll.fcs`) and live display filtering in Wireshark.
+* PyShark automated inspection scripts dissect and validate clean frames, corrupted frames, and collision jam signals.
+
+---
+
+## Frame Specification
+
+EtherType: `0x88B5` (IEEE 802 Local Experimental 1)
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Type (1B)   |          Sequence Number (2B)         |  ...  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| ... Ack (2B)  |  Window (1B)  |   Flags (1B)  |  Length (2B)  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        Payload Data ...                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   Frame Check Sequence (FCS, 4B)              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Field | Size | Description |
+| :--- | :--- | :--- |
+| **Type** | 1 byte | Frame Type: `0x01` DATA, `0x02` ACK, `0x03` NAK, `0x04` JAM |
+| **Seq** | 2 bytes | Frame sequence number (uint16, big-endian) |
+| **Ack** | 2 bytes | Cumulative acknowledgment number (uint16, big-endian) |
+| **Window** | 1 byte | Advertised receiver window size |
+| **Flags** | 1 byte | Control flags: `0x01` Retransmission, `0x02` Corrupted Noise |
+| **Length** | 2 bytes | Byte length of payload |
+| **Payload** | Variable | Encapsulated payload data |
+| **FCS** | 4 bytes | IEEE 802.3 CRC-32 Frame Check Sequence |
+
+---
+
+## Repository Structure
 
 ```
 Data-Link-Layer/
-├── include/                                # C++ Header Specifications
-│   ├── Color.h                             # ANSI terminal styling
-│   ├── Crc.h                               # CRC-32 & CRC-16 bitwise specifications
-│   ├── Frame.h                             # IEEE 802.3 Ethernet & DLL Frame packing
-│   ├── Channel.h                           # Shared physical bus & noise simulator
-│   ├── GbnSender.h                         # Go-Back-N sliding window sender
-│   ├── GbnReceiver.h                       # Go-Back-N receiver with in-order acceptance
-│   ├── CsmaNode.h                          # CSMA/CD station with exponential backoff
-│   └── PcapWriter.h                        # Standard libpcap binary capture writer
-│
-├── src/                                    # C++ Source Implementations
-│   ├── main.cpp                            # Interactive simulator running all 4 feature demos
-│   ├── Crc.cpp                             # Modulo-2 division & 256-table CRC algorithms
-│   ├── Frame.cpp                           # Bit packing, serialization & deserialization
-│   ├── Channel.cpp                         # Noise channel, loss model & medium sensing
-│   ├── GbnSender.cpp                       # Sliding window, timer & retransmission cascade
-│   ├── GbnReceiver.cpp                     # Strict in-order logic & cumulative ACKs
-│   ├── CsmaNode.cpp                        # Bus contention, jam broadcasting & BEB
-│   └── PcapWriter.cpp                      # Direct binary PCAP file generation
-│
-├── pyshark/                                # PyShark Inspection & Submission Tools
-│   ├── generate_pcap_and_inspect.py        # PCAP generator & deep PyShark packet dissector
-│   ├── generate_screenshots.py             # 5 high-resolution screenshot diagrams
-│   └── generate_presentation.py            # 5-slide PDF presentation builder
-│
-├── captures/                               # Captured Packets & Wireshark Dissector
-│   ├── dll_cpp_capture.pcap                # Real binary PCAP file inspectable by Wireshark
-│   └── dll_dissector.lua                   # Native Wireshark/TShark protocol dissector plugin
-│
-├── dll_protocol/                           # Python Protocol & Inspector Engine
-│   ├── __init__.py                         # Protocol package definition
-│   ├── crc.py                              # Pure Python CRC engine
-│   ├── frame.py                            # Pure Python frame definition
-│   ├── pcap_writer.py                      # Pure Python PCAP writer
-│   └── pyshark_inspector.py                # PyShark dissection engine
-│
-├── output_screenshots/                     # 5 High-Resolution Submission Diagrams
-│   ├── 01_gbn_flow_control_ladder.png      # GBN sequence timing ladder diagram
-│   ├── 02_crc_error_detection_analysis.png # CRC modulo-2 division & error matrix
-│   ├── 03_csma_timeline_and_contention.png # CSMA/CD shared bus contention & BEB timeline
-│   ├── 04_pyshark_packet_dissection.png    # Wireshark-compatible packet dissection layout
-│   └── 05_system_architecture_flowchart.png# Complete Layer-2 system architecture flowchart
-│
-├── presentation/                           # Academic Presentation Deliverables
-│   ├── presentation.pdf                    # 5-Slide Presentation in PDF format
-│   ├── slides.html                         # Interactive browser-based presentation
-│   └── SLIDES_EXPLANATION.md               # Student speaking notes & viva Q&A
-│
-├── CMakeLists.txt                          # CMake build configuration
-├── build.bat                               # Windows 1-click build script
-├── create_submission_zip.py                # Packages complete submission archive
-├── Data_Link_Layer_Final_Project.zip       # Final submission ZIP (39 files, 2.19 MB)
-└── requirements.txt                        # Python dependencies
+|-- include/                   # C++ Header Files
+|   |-- Channel.h              # Shared physical medium & noise model
+|   |-- Color.h                # ANSI terminal styling
+|   |-- Crc.h                  # CRC-32 and CRC-16 bitwise specifications
+|   |-- CsmaNode.h             # CSMA/CD station logic & backoff
+|   |-- Frame.h                # Frame serialization & deserialization
+|   |-- GbnReceiver.h          # Go-Back-N receiver with in-order verification
+|   |-- GbnSender.h            # Go-Back-N sender with sliding window
+|   `-- PcapWriter.h           # Libpcap binary capture writer
+|
+|-- src/                       # C++ Implementations
+|   |-- Channel.cpp            # Noise channel, loss model & carrier sensing
+|   |-- Crc.cpp                # Bitwise LFSR & table-accelerated CRC
+|   |-- CsmaNode.cpp           # Bus contention, jam broadcasting & BEB
+|   |-- Frame.cpp              # Bit packing & CRC verification
+|   |-- GbnReceiver.cpp        # In-order acceptance & cumulative ACKs
+|   |-- GbnSender.cpp          # Window management & Fast Retransmit
+|   |-- PcapWriter.cpp         # Direct binary PCAP generation
+|   `-- main.cpp               # C++ interactive demonstration suite
+|
+|-- dll_protocol/              # Python Protocol Engine & Inspector
+|   |-- __init__.py            # Package initialization
+|   |-- crc.py                 # Pure Python CRC engine
+|   |-- frame.py               # Frame packing and unpacking
+|   |-- pcap_writer.py         # Libpcap binary file writer
+|   `-- pyshark_inspector.py   # PyShark dissection engine
+|
+|-- captures/                  # Captures & Wireshark Dissector
+|   |-- dll_cpp_capture.pcap   # Binary capture file
+|   `-- dll_dissector.lua      # Native Wireshark/TShark Lua dissector
+|
+|-- pyshark/                   # Python Inspection Tools
+|   `-- generate_pcap_and_inspect.py  # PCAP generator & visualizer
+|
+|-- CMakeLists.txt             # CMake build configuration
+|-- Makefile                   # GNU Make build configuration
+|-- build.bat                  # Windows build script
+`-- requirements.txt           # Python dependencies
 ```
 
 ---
 
-## 🚀 Step-by-Step Execution Guide
+## Getting Started
 
-### 1. Environment Setup (Python Virtual Environment)
-Activate the virtual environment to use PyShark, Matplotlib, and TShark:
+### Prerequisites
+
+* **C++ Compiler:** GCC (g++ 9+), Clang (10+), or MSVC with C++17 support.
+* **Python:** Python 3.9+ (for PyShark packet inspection).
+* **Wireshark / TShark:** (Optional) for live packet dissection and GUI analysis.
+
+### Python Environment Setup
+
 ```bash
-# Windows:
+# Create and activate virtual environment
+python -m venv venv
+
+# Windows
 .\venv\Scripts\activate
 
-# Linux/macOS:
+# Linux / macOS
 source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 ---
 
-### 2. Running PyShark Deep Packet Dissection
-To generate the capture and inspect every packet with PyShark:
-```bash
-python pyshark/generate_pcap_and_inspect.py
-```
-This script:
-1. Records 22 frames into `captures/dll_cpp_capture.pcap`.
-2. Loads the native Wireshark Lua dissector (`captures/dll_dissector.lua`).
-3. Dissects the frames into a summary table and detailed packet views for:
-   - **Feature 1:** Error Control (CRC-32 verification and corrupted frame drops).
-   - **Feature 2:** Flow Control (Go-Back-N sliding window, in-order delivery, cumulative ACKs, and timeout retransmissions).
-   - **Feature 3:** Multiple Access (CSMA bus sensing, collision detection, 32-bit jam signals, and binary exponential backoff).
+## Building and Running
 
----
+### 1. C++ Simulator
 
-### 3. Viewing in Native Wireshark (Optional)
-Because `dll_cpp_capture.pcap` is a real Libpcap binary file, you can open it in Wireshark:
-```bash
-wireshark captures/dll_cpp_capture.pcap
-```
-To load the custom protocol fields in Wireshark GUI:
-```bash
-wireshark -X lua_script:captures/dll_dissector.lua captures/dll_cpp_capture.pcap
-```
-
----
-
-### 4. Compiling the C++ Simulator
-#### Option A: Windows Batch Script
+#### Windows (Batch Script)
 ```cmd
 build.bat
 bin\dll_simulator.exe
 ```
 
-#### Option B: CMake
+#### Linux / macOS / Windows (CMake)
 ```bash
 cmake -B build
 cmake --build build
 ./build/dll_simulator
 ```
 
----
-
-### 5. Regenerating Deliverables (Diagrams & Presentation)
+#### GNU Make
 ```bash
-# Rebuild the 5 screenshot figures in output_screenshots/
-python pyshark/generate_screenshots.py
-
-# Rebuild the 5-slide PDF presentation in presentation/presentation.pdf
-python pyshark/generate_presentation.py
-
-# Re-package the submission ZIP
-python create_submission_zip.py
+make
+./bin/dll_simulator
 ```
 
 ---
 
-## 📊 Summary of Demonstrated Concepts
+### 2. PyShark Dissection & Terminal Visualizer
 
-| Feature | C++ Implementation Details | PyShark & Wireshark Dissection |
-| :--- | :--- | :--- |
-| **Flow Control** | Go-Back-N ARQ, Sliding Window $N=4$, Cumulative ACKs, Base Timers | Cumulative ACK analysis, window sliding, and retransmitted frames tagged with `[RETX]`. |
-| **Error Control** | IEEE 802.3 CRC-32 ($0xEDB88320$), CRC-16 CCITT, bit-flip & burst noise | Corrupted frames tagged with `[!] CRC ERROR (FCS Mismatch)` and discarded. |
-| **Multiple Access** | CSMA/CD, Carrier Sensing, 32-bit Jam Signals, Truncated Binary Exponential Backoff | Sensed bus events, `[COLLISION JAM SIGNAL]` broadcast frames, and backoff resolution. |
+Run the animated terminal visualizer and PyShark dissection suite:
+
+```bash
+python pyshark/generate_pcap_and_inspect.py
+```
+
+This script:
+1. Generates authentic Data Link Layer traffic across all three subsystems.
+2. Writes the packet trace to `captures/dll_cpp_capture.pcap`.
+3. Loads `captures/dll_dissector.lua` into TShark to dissect custom fields.
+4. Prints formatted packet summaries, protocol layer fields, and CRC validation statuses.
 
 ---
 
-## 🎓 Academic Presentation Notes
-See [`presentation/SLIDES_EXPLANATION.md`](presentation/SLIDES_EXPLANATION.md) for detailed slide-by-slide speaking notes and viva interview questions with answers.
+### 3. Native Wireshark Integration
+
+To inspect the generated PCAP in the Wireshark GUI with custom protocol decoding:
+
+```bash
+wireshark -X lua_script:captures/dll_dissector.lua captures/dll_cpp_capture.pcap
+```
+
+Alternatively, copy `captures/dll_dissector.lua` to your personal Wireshark plugins directory:
+* **Windows:** `%APPDATA%\Wireshark\plugins\`
+* **Linux:** `~/.local/lib/wireshark/plugins/`
+* **macOS:** `~/.config/wireshark/plugins/`
+
+Once installed, Wireshark will automatically recognize EtherType `0x88B5` as `DLL` protocol frames, displaying sequence numbers, cumulative ACKs, window sizes, and FCS checks in the packet details pane.

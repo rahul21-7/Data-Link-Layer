@@ -49,7 +49,8 @@ void demo_error_control(PcapWriter& pcap) {
     std::cout << "  - CRC-32 (Bitwise Shift-Register) : 0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc_bitwise << "\n";
     std::cout << "  - CRC-32 (256-Table Accelerated)  : 0x" << std::setw(8) << std::setfill('0') << crc_table << "\n";
     std::cout << "  - CRC-16 (CCITT Polynomial)       : 0x" << std::setw(4) << std::setfill('0') << crc16 << std::dec << "\n";
-    std::cout << "  - Bitwise vs Table Match Check     : " << (crc_bitwise == crc_table ? Color::GREEN "[PERFECT MATCH]" : Color::RED "[MISMATCH]") << Color::RESET << "\n\n";
+    std::cout << "  - Bitwise vs Table Match Check     : " << (crc_bitwise == crc_table ? Color::GREEN : Color::RED)
+              << (crc_bitwise == crc_table ? "[PERFECT MATCH]" : "[MISMATCH]") << Color::RESET << "\n\n";
 
     // 3. Bit Error and Burst Error Injection
     std::cout << Color::BOLD << "[3] Transmission Error Injection & Syndrome Detection:" << Color::RESET << "\n";
@@ -59,7 +60,8 @@ void demo_error_control(PcapWriter& pcap) {
     std::cout << "  Clean Frame Created : " << clean_frame.summary() << "\n";
     uint32_t comp_fcs = 0;
     bool clean_ok = clean_frame.verify_integrity(&comp_fcs);
-    std::cout << "  Clean Frame CRC Check: " << (clean_ok ? Color::GREEN "[VALID FCS]" : Color::RED "[INVALID]")
+    std::cout << "  Clean Frame CRC Check: " << (clean_ok ? Color::GREEN : Color::RED)
+              << (clean_ok ? "[VALID FCS]" : "[INVALID]")
               << Color::RESET << " (FCS=0x" << std::hex << std::uppercase << clean_frame.fcs << ")\n\n" << std::dec;
 
     // Single Bit Flip
@@ -72,12 +74,13 @@ void demo_error_control(PcapWriter& pcap) {
     std::cout << Color::YELLOW << "  [!] Single-Bit Flip Injected at Byte 25, Bit 4!" << Color::RESET << "\n";
     std::cout << "  Corrupted Frame Data : " << corrupted_frame.summary() << "\n";
     bool corrupt_ok = corrupted_frame.verify_integrity(&comp_fcs);
-    std::cout << "  Corrupted Frame Check: " << (corrupt_ok ? Color::GREEN "[VALID]" : Color::RED "[FCS ERROR DETECTED]")
+    std::cout << "  Corrupted Frame Check: " << (corrupt_ok ? Color::GREEN : Color::RED)
+              << (corrupt_ok ? "[VALID]" : "[FCS ERROR DETECTED]")
               << Color::RESET << " (Expected 0x" << std::hex << std::uppercase << corrupted_frame.fcs
               << " vs Computed 0x" << comp_fcs << ")" << std::dec << "\n\n";
 
-    // Multi-Bit Burst Error
-    std::vector<uint8_t> raw_burst = CRC::inject_burst_error(raw_clean, 20 * 8, 12); // 12-bit burst error
+    // Multi-Bit Burst Error (Injected into payload bytes)
+    std::vector<uint8_t> raw_burst = CRC::inject_burst_error(raw_clean, 26 * 8, 12); // 12-bit burst error in payload
     DLLFrame burst_frame = DLLFrame::deserialize(raw_burst);
     burst_frame.flags |= FLAG_CORRUPTED;
     pcap.write_frame(burst_frame, 1.010);
@@ -85,7 +88,8 @@ void demo_error_control(PcapWriter& pcap) {
     std::cout << Color::YELLOW << "  [!] 12-Bit Electrical Burst Error Injected!" << Color::RESET << "\n";
     std::cout << "  Burst Corrupted Frame: " << burst_frame.summary() << "\n";
     bool burst_ok = burst_frame.verify_integrity(&comp_fcs);
-    std::cout << "  Burst Error Check    : " << (burst_ok ? Color::GREEN "[VALID]" : Color::RED "[BURST ERROR DETECTED]")
+    std::cout << "  Burst Error Check    : " << (burst_ok ? Color::GREEN : Color::RED)
+              << (burst_ok ? "[VALID]" : "[BURST ERROR DETECTED]")
               << Color::RESET << "\n";
 }
 
@@ -113,7 +117,8 @@ void demo_flow_control(PcapWriter& pcap) {
     // Verify window full
     std::cout << "\n" << Color::BOLD << "[2] Window Full Protection Check:" << Color::RESET << "\n";
     std::cout << "  Can sender transmit another packet? "
-              << (sender.can_send() ? Color::GREEN "YES" : Color::RED "NO (Window is Full!)")
+              << (sender.can_send() ? Color::GREEN : Color::RED)
+              << (sender.can_send() ? "YES" : "NO (Window is Full!)")
               << Color::RESET << "\n\n";
 
     // Simulate Receiver processing Packet 0 and Packet 1 successfully

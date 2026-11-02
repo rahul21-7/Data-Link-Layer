@@ -323,9 +323,10 @@ def main():
         return
 
     # Interactive Menu
-    print(f"\n{C_BOLD}{C_CYAN}╔══════════════════════════════════════════════════════════════════════════════════════╗{C_RESET}")
-    print(f"{C_BOLD}{C_CYAN}║{C_RESET}  {C_BOLD}{C_WHITE}DATA LINK LAYER PROTOCOL SUITE - LIVE INTERACTIVE DEMONSTRATION SUITE       {C_RESET}{C_BOLD}{C_CYAN}║{C_RESET}")
-    print(f"{C_BOLD}{C_CYAN}╚══════════════════════════════════════════════════════════════════════════════════════╝{C_RESET}")
+    menu_bar = "+" + "=" * 86 + "+"
+    print(f"\n{C_BOLD}{C_CYAN}{menu_bar}{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}|{C_RESET}  {C_BOLD}{C_WHITE}DATA LINK LAYER PROTOCOL SUITE - LIVE INTERACTIVE DEMONSTRATION SUITE       {C_RESET}{C_BOLD}{C_CYAN}|{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}{menu_bar}{C_RESET}")
     print(f"  {C_BOLD}[1]{C_RESET} Live Animated Go-Back-N (GBN) Sliding Window Visualizer")
     print(f"  {C_BOLD}[2]{C_RESET} Error Control (CRC-32 & CRC-16 Bit-Level Noise Injection)")
     print(f"  {C_BOLD}[3]{C_RESET} Multiple Access (CSMA/CD Contention, Collisions & 32-bit Jam)")
