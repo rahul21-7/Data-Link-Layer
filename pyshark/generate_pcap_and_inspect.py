@@ -119,14 +119,15 @@ def run_live_gbn_visualizer(writer: PCAPWriter, speed: float = 0.7):
         render_sliding_window_box(base, next_seq, win_size, total_packets, 0.3 * (i + 1), timeout_duration, f"Transmitted Packet Seq={i}. Timer running for Base={base}.")
         time.sleep(speed)
 
-    # Step 3: Receiver sends Cumulative ACK for 0 and 1
-    for ack_idx in range(2):
-        ack = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, ack_idx, win_size, FLAG_NONE, "")
+    # Step 3: Receiver sends Cumulative ACK for 0 and 1 (ACK = seq + 1)
+    for pkt_idx in range(2):
+        ack_val = pkt_idx + 1  # ACK = seq + 1 (next expected sequence number)
+        ack = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, ack_val, win_size, FLAG_NONE, "")
         writer.write_frame(ack, t)
         t += 0.05
-        base = ack_idx + 1
-        print(f"  {C_GREEN}<-- [RX ACK] Node B received Seq={ack_idx} in-order! Cumulative ACK={ack_idx} sent.{C_RESET}")
-        render_sliding_window_box(base, next_seq, win_size, total_packets, 0.1, timeout_duration, f"Cumulative ACK={ack_idx} received! Window slides forward: Base is now {base}!")
+        base = ack_val
+        print(f"  {C_GREEN}<-- [RX ACK] Node B received Seq={pkt_idx} in-order! Cumulative ACK={ack_val} (Expecting Seq={ack_val}) sent.{C_RESET}")
+        render_sliding_window_box(base, next_seq, win_size, total_packets, 0.1, timeout_duration, f"Cumulative ACK={ack_val} received! Window slides forward: Base is now {base}!")
         time.sleep(speed)
 
     # Step 4: Transmit packets 2, 3, 4, 5 (Filling window)
@@ -151,8 +152,8 @@ def run_live_gbn_visualizer(writer: PCAPWriter, speed: float = 0.7):
     t += 0.05
 
     print(f"  {C_RED}[RX ERROR] Node B computed FCS syndrome mismatch on Seq=2!{C_RESET}")
-    print(f"  {C_RED}--> GBN Rule: Discarding corrupted frame Seq=2. Repeating Cumulative ACK=1.{C_RESET}")
-    dup_ack1 = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, 1, win_size, FLAG_NONE, "")
+    print(f"  {C_RED}--> GBN Rule: Discarding corrupted frame Seq=2. Repeating Cumulative ACK=2.{C_RESET}")
+    dup_ack1 = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, 2, win_size, FLAG_NONE, "")
     writer.write_frame(dup_ack1, t)
     t += 0.05
     time.sleep(speed * 0.5)
@@ -160,8 +161,8 @@ def run_live_gbn_visualizer(writer: PCAPWriter, speed: float = 0.7):
     # Step 6: Subsequent packets 3, 4, 5 arrive out-of-order -> Trigger 3 Duplicate ACKs!
     print(f"\n  {C_BOLD}{C_MAGENTA}[!] OUT-OF-ORDER TRAIN: Packets Seq=3, Seq=4, Seq=5 arrive at Node B while Seq=2 missing!{C_RESET}")
     for arriving_seq in range(3, 6):
-        print(f"  {C_MAGENTA}--> Node B received Seq={arriving_seq} (Expected Seq=2) -> DISCARDED! Sending Dup-ACK=1.{C_RESET}")
-        dup_ack = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, 1, win_size, FLAG_NONE, "")
+        print(f"  {C_MAGENTA}--> Node B received Seq={arriving_seq} (Expected Seq=2) -> DISCARDED! Sending Dup-ACK=2.{C_RESET}")
+        dup_ack = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, 2, win_size, FLAG_NONE, "")
         writer.write_frame(dup_ack, t)
         t += 0.05
 
@@ -171,8 +172,8 @@ def run_live_gbn_visualizer(writer: PCAPWriter, speed: float = 0.7):
     print(f"  {C_BOLD}{C_CYAN}|{C_RESET}  {C_BOLD}{C_WHITE}[*] UNIQUE FEATURE: LAYER-2 FAST RETRANSMIT (EARLY LOSS INFERENCE)            {C_RESET}{C_BOLD}{C_CYAN}|{C_RESET}")
     print(f"  {C_BOLD}{C_CYAN}{box_line}{C_RESET}")
     print(f"  {C_YELLOW}--> Standard GBN would idle until coarse timer expires ({timeout_duration}s).{C_RESET}")
-    print(f"  {C_GREEN}--> [DETECTION] 3 Duplicate ACKs (ACK=1) received at sender!{C_RESET}")
-    print(f"  {C_GREEN}--> [INFERENCE] Missing packet is uniquely identified as Seq=2 without waiting for timer!{C_RESET}")
+    print(f"  {C_GREEN}--> [DETECTION] 3 Duplicate ACKs (ACK=2) received at sender!{C_RESET}")
+    print(f"  {C_GREEN}--> [INFERENCE] Missing packet is uniquely identified as Seq=2 (Base=2) without waiting for timer!{C_RESET}")
     print(f"  {C_GREEN}--> [BENEFIT] Saved ~1.20s of idle link downtime; boosted channel Goodput by 38%!{C_RESET}\n")
     time.sleep(speed)
 
@@ -185,15 +186,16 @@ def run_live_gbn_visualizer(writer: PCAPWriter, speed: float = 0.7):
         print(f"  {C_MAGENTA}  --> [RETX] Retransmitted Seq={retx_seq} with FLAG_RETRANSMISSION set{C_RESET}")
         time.sleep(speed * 0.4)
 
-    # Step 9: Receiver acknowledges all retransmitted frames in order
+    # Step 9: Receiver acknowledges all retransmitted frames in order (ACK = seq + 1)
     print(f"\n  {C_GREEN}Node B now receives retransmitted packets strictly in-order:{C_RESET}")
-    for ack_idx in range(base, next_seq):
-        ack = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, ack_idx, win_size, FLAG_NONE, "")
+    for retx_seq in range(base, next_seq):
+        ack_val = retx_seq + 1
+        ack = DLLFrame("00:11:22:33:44:02", "00:11:22:33:44:01", FRAME_ACK, 0, ack_val, win_size, FLAG_NONE, "")
         writer.write_frame(ack, t)
         t += 0.05
-        base = ack_idx + 1
-        print(f"  {C_GREEN}<-- [RX ACK] Cumulative ACK={ack_idx} received! Window advances to Base={base}.{C_RESET}")
-        render_sliding_window_box(base, next_seq, win_size, total_packets, 0.0, timeout_duration, f"All frames up to {ack_idx} acknowledged! Base={base}.")
+        base = ack_val
+        print(f"  {C_GREEN}<-- [RX ACK] Cumulative ACK={ack_val} (Expecting Seq={ack_val}) received! Window advances to Base={base}.{C_RESET}")
+        render_sliding_window_box(base, next_seq, win_size, total_packets, 0.0, timeout_duration, f"All frames up to Seq={retx_seq} acknowledged! Base={base}.")
         time.sleep(speed * 0.4)
 
     # Step 10: Quantitative Channel Metrics
@@ -298,7 +300,7 @@ def display_pyshark_dissection(pcap_path: str):
 
     print(f"\n{C_BOLD}{C_YELLOW}--- FEATURE 2: FLOW CONTROL (GO-BACK-N) ---{C_RESET}")
     inspector.print_detailed_packet(packets[3], "GBN DATA Frame Seq=0 [Sender Window Open]")
-    inspector.print_detailed_packet(packets[8], "Cumulative ACK=1 [Confirms Packets 0 & 1, Slides Window]")
+    inspector.print_detailed_packet(packets[8], "Cumulative ACK (Seq+1 Convention) [Confirms in-order delivery]")
     if len(packets) > 12:
         inspector.print_detailed_packet(packets[12], "GBN Retransmission Seq=2 [Flag RETX set, Timer Recovery]")
 

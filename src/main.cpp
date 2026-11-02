@@ -131,7 +131,7 @@ void demo_flow_control(PcapWriter& pcap) {
         sender.process_ack(ack.ack_num, current_time);
         current_time += 0.02;
     }
-    std::cout << "\n  Sender window slides forward after receiving Cumulative ACK=1:\n";
+    std::cout << "\n  Sender window slides forward after receiving Cumulative ACK=" << receiver.get_last_ack() << ":\n";
     sender.print_window_state();
 
     // Simulate Frame 2 being corrupted by noise, while Frame 3 arrives intact

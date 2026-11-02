@@ -43,10 +43,10 @@ DLLFrame GbnSender::send_packet(const std::string& payload, double current_time)
 }
 
 bool GbnSender::process_ack(uint16_t cumulative_ack, double current_time, std::vector<DLLFrame>* out_fast_retx) {
-    // Cumulative ACK: ACK=k acknowledges all packets up to and including k
-    if (cumulative_ack >= base && cumulative_ack < next_seq_num) {
+    // Cumulative ACK (Next-Expected convention: ACK=k confirms frames 0..k-1, expects k next)
+    if (cumulative_ack > base && cumulative_ack <= next_seq_num) {
         uint16_t old_base = base;
-        base = cumulative_ack + 1;
+        base = cumulative_ack;
         last_ack_received = cumulative_ack;
         dup_ack_count = 0; // reset duplicate ACK count on fresh advance
 
@@ -67,7 +67,8 @@ bool GbnSender::process_ack(uint16_t cumulative_ack, double current_time, std::v
     }
 
     // Duplicate ACK detection (Layer-2 Fast Retransmit)
-    if (last_ack_received >= 0 && cumulative_ack == static_cast<uint16_t>(last_ack_received)) {
+    // When cumulative_ack == base (repeatedly asking for packet 'base')
+    if (cumulative_ack == base && last_ack_received >= 0) {
         dup_ack_count++;
         std::cout << "  " << Color::YELLOW << "[DUP-ACK #" << dup_ack_count
                   << "] Repeated ACK=" << cumulative_ack << " received for Base=" << base << Color::RESET << "\n";
