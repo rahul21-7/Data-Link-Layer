@@ -284,8 +284,16 @@ def run_live_csma_demo(writer: PCAPWriter):
 
 def display_pyshark_dissection(pcap_path: str):
     """Loads and displays PyShark / Wireshark packet dissections."""
+    if not os.path.exists(pcap_path):
+        print(f"\n{C_BOLD}{C_RED}[!] PCAP file not found: '{pcap_path}'{C_RESET}")
+        return
+
     inspector = PySharkInspector()
     packets = inspector.parse_pcap(pcap_path)
+
+    if not packets:
+        print(f"\n{C_BOLD}{C_YELLOW}[!] Capture file '{pcap_path}' contains 0 packets. Run Option 4 to generate trace first.{C_RESET}")
+        return
 
     print(f"\n{C_BOLD}{C_GREEN}>>> SUCCESS: Loaded {len(packets)} packets into PyShark from '{pcap_path}'!{C_RESET}")
     inspector.print_packet_summary_table(packets)
@@ -294,29 +302,54 @@ def display_pyshark_dissection(pcap_path: str):
     print(f"{C_BOLD}{C_WHITE}{'DETAILED PYSHARK DISSECTIONS BY FEATURE':^85}{C_RESET}")
     print(f"{C_BOLD}{C_MAGENTA}{'='*85}{C_RESET}")
 
+    # Feature 1: Error Control
     print(f"\n{C_BOLD}{C_YELLOW}--- FEATURE 1: ERROR CONTROL & CRC VALIDATION ---{C_RESET}")
-    inspector.print_detailed_packet(packets[0], "Clean Frame [CRC-32 FCS Valid]")
-    inspector.print_detailed_packet(packets[1], "Corrupted Frame [Single-Bit Noise Injected -> FCS Mismatch]")
+    if len(packets) > 0:
+        inspector.print_detailed_packet(packets[0], "Clean Frame [CRC-32 FCS Valid]")
+    if len(packets) > 1:
+        inspector.print_detailed_packet(packets[1], "Corrupted Frame [Single-Bit Noise Injected -> FCS Mismatch]")
 
+    # Feature 2: Flow Control (GBN)
     print(f"\n{C_BOLD}{C_YELLOW}--- FEATURE 2: FLOW CONTROL (GO-BACK-N) ---{C_RESET}")
-    inspector.print_detailed_packet(packets[3], "GBN DATA Frame Seq=0 [Sender Window Open]")
-    inspector.print_detailed_packet(packets[8], "Cumulative ACK (Seq+1 Convention) [Confirms in-order delivery]")
-    if len(packets) > 12:
-        inspector.print_detailed_packet(packets[12], "GBN Retransmission Seq=2 [Flag RETX set, Timer Recovery]")
+    # Find DATA frame, ACK frame, and Retransmission frame dynamically
+    data_pkt = next((p for p in packets if getattr(p, "dll", None) and getattr(p.dll, "type", "") in ["0x01", "1"]), None)
+    ack_pkt = next((p for p in packets if getattr(p, "dll", None) and getattr(p.dll, "type", "") in ["0x02", "2"]), None)
+    retx_pkt = next((p for p in packets if getattr(p, "dll", None) and getattr(p.dll, "flags_retx", "") in ["1", "True", "0x01"]), None)
 
+    if data_pkt:
+        inspector.print_detailed_packet(data_pkt, "GBN DATA Frame [Sender Window Open]")
+    elif len(packets) > 3:
+        inspector.print_detailed_packet(packets[3], "GBN DATA Frame [Sender Window Open]")
+
+    if ack_pkt:
+        inspector.print_detailed_packet(ack_pkt, "Cumulative ACK (Seq+1 Convention) [Confirms in-order delivery]")
+    elif len(packets) > 6:
+        inspector.print_detailed_packet(packets[6], "Cumulative ACK (Seq+1 Convention) [Confirms in-order delivery]")
+
+    if retx_pkt:
+        inspector.print_detailed_packet(retx_pkt, "GBN Retransmission [Flag RETX set, Fast Retransmit / Timer Recovery]")
+    elif len(packets) > 12:
+        inspector.print_detailed_packet(packets[12], "GBN Retransmission [Flag RETX set, Timer Recovery]")
+
+    # Feature 3: Multiple Access (CSMA/CD)
     print(f"\n{C_BOLD}{C_YELLOW}--- FEATURE 3: MULTIPLE ACCESS (CSMA/CD) ---{C_RESET}")
-    for pkt in packets:
-        if getattr(pkt, "dll", None) and getattr(pkt.dll, "type", "") in ["0x04", "4"]:
-            inspector.print_detailed_packet(pkt, "Collision Jam Signal [32-bit Jamming Pattern on Shared Bus]")
-            break
+    jam_pkt = next((p for p in packets if getattr(p, "dll", None) and getattr(p.dll, "type", "") in ["0x04", "4"]), None)
+    if jam_pkt:
+        inspector.print_detailed_packet(jam_pkt, "Collision Jam Signal [32-bit Jamming Pattern on Shared Bus]")
+    elif len(packets) > 0:
+        # Fallback search
+        for pkt in packets:
+            if getattr(pkt, "dll", None) and getattr(pkt.dll, "type", "") in ["0x04", "4"]:
+                inspector.print_detailed_packet(pkt, "Collision Jam Signal [32-bit Jamming Pattern on Shared Bus]")
+                break
 
 
 def main():
     os.makedirs(os.path.dirname(PCAP_PATH), exist_ok=True)
-    writer = PCAPWriter(PCAP_PATH)
 
     # Check command line arguments for non-interactive automated run
     if len(sys.argv) > 1 and sys.argv[1] in ["--auto", "-a", "--all"]:
+        writer = PCAPWriter(PCAP_PATH)
         run_live_crc_demo(writer)
         run_live_gbn_visualizer(writer, speed=0.1)
         run_live_csma_demo(writer)
@@ -341,19 +374,30 @@ def main():
         choice = "4"
 
     if choice == "1":
+        writer = PCAPWriter(PCAP_PATH)
         run_live_gbn_visualizer(writer, speed=0.6)
         writer.close()
     elif choice == "2":
+        writer = PCAPWriter(PCAP_PATH)
         run_live_crc_demo(writer)
         writer.close()
     elif choice == "3":
+        writer = PCAPWriter(PCAP_PATH)
         run_live_csma_demo(writer)
         writer.close()
     elif choice == "5":
-        writer.close()
+        # Do not wipe the existing PCAP file when user selects option 5!
+        if not os.path.exists(PCAP_PATH) or os.path.getsize(PCAP_PATH) <= 24:
+            print(f"\n{C_BOLD}{C_YELLOW}[!] Existing PCAP file is empty or missing. Generating fresh trace first...{C_RESET}")
+            writer = PCAPWriter(PCAP_PATH)
+            run_live_crc_demo(writer)
+            run_live_gbn_visualizer(writer, speed=0.2)
+            run_live_csma_demo(writer)
+            writer.close()
         display_pyshark_dissection(PCAP_PATH)
     else:
-        # Full Academic Run
+        # Full Academic Run (Option 4 / Default)
+        writer = PCAPWriter(PCAP_PATH)
         run_live_crc_demo(writer)
         run_live_gbn_visualizer(writer, speed=0.5)
         run_live_csma_demo(writer)
