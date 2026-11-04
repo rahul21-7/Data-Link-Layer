@@ -68,3 +68,9 @@ Testing/
 .cache/
 
 venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
